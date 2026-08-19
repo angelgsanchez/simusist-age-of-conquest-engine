@@ -1,43 +1,26 @@
-import random
-
-# ==========================================
-# FUNCIONES AUXILIARES MATEMÁTICAS
-# ==========================================
-def Sat(x):
-    """Función de saturación para mantener variables en el espacio topológico [0, 100]."""
-    return max(0.0, min(100.0, x))
-
-# ==========================================
-# CLASES DE ESTADO (STOCKS)
-# ==========================================
 class Provincia:
-    def __init__(self, nombre, propietario, poblacion, tropas, felicidad=100.0):
+    def __init__(self, nombre, propietario, poblacion, tropas):
         self.nombre = nombre
         self.propietario = propietario
         self.poblacion = poblacion
         self.tropas = tropas
-        self.felicidad = felicidad # Hit: Nivel de Felicidad [0, 100]
+        
+    def crecimiento_poblacional(self, tasa=0.05):
+        """Aumenta la población en cada turno."""
+        self.poblacion = int(self.poblacion * (1 + tasa))
 
 class Imperio:
     def __init__(self, nombre, oro_inicial, tasa_impuestos):
         self.nombre = nombre
         self.oro = oro_inicial
-        self.tasa_impuestos = tasa_impuestos
-        self.es_protectorado = False # esProtectorado: Estado del Régimen Político
-
-# ==========================================
-# MOTOR DE SIMULACIÓN
-# ==========================================
+        self.tasa_impuestos = tasa_impuestos  # Porcentaje (ej. 0.15 = 15%)
+        self.costo_mantenimiento_tropa = 1.0  # Oro por unidad en cada turno
+        
 class MotorAgeOfConquest:
     def __init__(self):
         self.turnos_transcurridos = 0
         self.imperios = {}
         self.mapa = {}
-        
-        # Matriz de Parámetros Fijos (Constantes del Juego)
-        self.delta = 8.0        # Coeficiente de Shock Bélico (Moral)
-        self.delta_Hrey = 20.0  # Penalización por Anarquía Institucional
-        self.p_muerte = 0.25    # Probabilidad de Muerte del Líder
 
     def registrar_imperio(self, imperio):
         self.imperios[imperio.nombre] = imperio
@@ -45,97 +28,100 @@ class MotorAgeOfConquest:
     def registrar_provincia(self, provincia):
         self.mapa[provincia.nombre] = provincia
 
-    def resolver_conflicto(self, prov_origen, prov_destino, tropas_atacantes, rey_presente=False, mu_terreno=1.0):
-        """
-        Subsistema Militar: Modelo de Resolución de Combate basado en 
-        las Ecuaciones de Combate de Lanchester adaptadas a tiempo discreto.
-        """
+    def reclutar_tropas(self, nombre_imperio, nombre_provincia, cantidad):
+        """Lógica de reclutamiento: cuesta oro y reduce la población."""
+        imperio = self.imperios[nombre_imperio]
+        provincia = self.mapa[nombre_provincia]
+        costo_reclutamiento = 2.0  # Costo por tropa
+        
+        costo_total = cantidad * costo_reclutamiento
+        
+        if imperio.oro >= costo_total and provincia.poblacion > cantidad:
+            imperio.oro -= costo_total
+            provincia.poblacion -= cantidad
+            provincia.tropas += cantidad
+            print(f"[RECLUTAMIENTO] {cantidad} tropas reclutadas en {provincia.nombre}.")
+        else:
+            print("[ERROR] Oro o población insuficiente para reclutar.")
+
+    def resolver_conflicto(self, prov_origen, prov_destino, tropas_atacantes):
+        """Mecánica de resolución de conflictos (Ecuación determinista básica)."""
         origen = self.mapa[prov_origen]
         destino = self.mapa[prov_destino]
-        imperio_atacante = self.imperios[origen.propietario]
         
         if origen.tropas < tropas_atacantes:
-            print("[ERROR LOGÍSTICO] Tropas insuficientes para iniciar campaña.")
+            print("[ERROR] No hay suficientes tropas en la provincia de origen.")
             return
 
-        print(f"\n[COMBATE] {origen.propietario} ataca {destino.nombre} ({destino.propietario}) con {tropas_atacantes} soldados.")
+        print(f"[COMBATE] {origen.propietario} ataca {destino.nombre} ({destino.propietario}) con {tropas_atacantes} tropas.")
         origen.tropas -= tropas_atacantes
         
-        # Inicialización de las iteraciones de asalto (k)
-        A_k = float(tropas_atacantes) # Tropas del ejército Atacante
-        D_k = float(destino.tropas)   # Tropas del ejército Defensor
+        # Ecuación de combate: El defensor tiene ventaja táctica (multiplicador 1.2)
+        fuerza_defensiva = destino.tropas * 1.2
+        fuerza_ofensiva = tropas_atacantes * 1.0
         
-        # Multiplicadores
-        mu_rey = 1.25 if rey_presente else 1.00 # Multiplicador de daño por presencia del líder
-        eficacia_A = 0.10 # Constante base de letalidad ofensiva
-        eficacia_D = 0.10 # Constante base de letalidad defensiva
-        
-        k = 0 # Iterador del bucle de asaltos
-        
-        # Condiciones de Parada: El bucle finaliza cuando A_k+1 = 0 o D_k+1 = 0
-        while A_k > 0 and D_k > 0:
-            k += 1
+        if fuerza_ofensiva > fuerza_defensiva:
+            # Gana el atacante
+            bajas_atacante = int(destino.tropas * 0.8)
+            tropas_sobrevivientes = tropas_atacantes - bajas_atacante
+            print(f"[RESULTADO] ¡{origen.propietario} conquista {destino.nombre}! Sobreviven {tropas_sobrevivientes} tropas.")
             
-            # Inyección de variables aleatorias independientes (Uniforme Continua)
-            # Modela factores climáticos o estratégicos no visibles oscilando entre 70% y 130%
-            X_A = random.uniform(0.7, 1.3)
-            X_D = random.uniform(0.7, 1.3)
-            
-            # Ecuaciones de Transición Táctica (Bajas por Asalto)
-            delta_A_k = D_k * eficacia_D * X_D
-            delta_D_k = A_k * eficacia_A * mu_rey * mu_terreno * X_A
-            
-            # Actualización de estados asegurando el límite inferior en 0
-            A_k = max(0.0, A_k - delta_A_k)
-            D_k = max(0.0, D_k - delta_D_k)
-            
-        A_k = int(A_k)
-        D_k = int(D_k)
-        
-        # ==========================================
-        # RESOLUCIÓN E IMPACTO EN LAS VARIABLES DE ESTADO
-        # ==========================================
-        if A_k > 0:
-            print(f"[VICTORIA TÁCTICA] ¡{origen.propietario} conquista {destino.nombre} en {k} iteraciones! Sobreviven {A_k} tropas.")
             destino.propietario = origen.propietario
-            destino.tropas = A_k
+            destino.tropas = tropas_sobrevivientes
         else:
-            print(f"[DERROTA TÁCTICA] {destino.propietario} retiene el territorio tras {k} iteraciones. Sobreviven {D_k} tropas.")
-            destino.tropas = D_k
+            # Gana el defensor
+            bajas_defensor = int(tropas_atacantes * 0.5)
+            destino.tropas -= bajas_defensor
+            print(f"[RESULTADO] {destino.propietario} repele el ataque. Le quedan {destino.tropas} tropas.")
+
+    def procesar_turno(self):
+        """Calcula el estado del siguiente turno (Economía y Población)."""
+        self.turnos_transcurridos += 1
+        print(f"\n{'='*15} INICIANDO TURNO {self.turnos_transcurridos} {'='*15}")
+        
+        # 1. Economía y Mantenimiento
+        for nombre, imperio in self.imperios.items():
+            ingresos_totales = 0
+            mantenimiento_total = 0
             
-            # Castigo directo sobre la felicidad del territorio de origen por derrota militar
-            origen.felicidad = Sat(origen.felicidad - self.delta)
-            print(f"[SHOCK BÉLICO] La felicidad en {origen.nombre} cae a {origen.felicidad:.1f}%.")
+            provincias_propias = [p for p in self.mapa.values() if p.propietario == nombre]
             
-            # Evaluación del Evento Estocástico Crítico (Muerte del Rey)
-            if rey_presente:
-                print(f"[*] El Rey estaba en la batalla. Calculando supervivencia...")
-                # Distribución de Bernoulli para la muerte del comandante tras perder
-                Z = 1 if random.random() <= self.p_muerte else 0 
+            for prov in provincias_propias:
+                # Ecuación de ingresos: Población * Tasa de Impuestos
+                ingresos_totales += prov.poblacion * imperio.tasa_impuestos
+                # Ecuación de gastos: Tropas * Costo de Mantenimiento
+                mantenimiento_total += prov.tropas * imperio.costo_mantenimiento_tropa
+                # Actualizar demografía
+                prov.crecimiento_poblacional()
                 
-                if Z == 1:
-                    print(f"[CRÍTICO] ¡El Rey de {origen.propietario} ha sido ejecutado en el campo de batalla!")
-                    # Modificación inmediata de la variable booleana global
-                    imperio_atacante.es_protectorado = True 
-                    # Contracción matemática sobre la felicidad por anarquía institucional
-                    origen.felicidad = Sat(origen.felicidad - self.delta_Hrey) 
-                    print(f"[ANARQUÍA] {origen.propietario} pierde su soberanía (esProtectorado=True). La moral local se desploma a {origen.felicidad:.1f}%.")
-                else:
-                    print("[*] El Rey logró escapar con vida.")
+            balance_neto = ingresos_totales - mantenimiento_total
+            imperio.oro += balance_neto
+            
+            print(f"[{nombre}] Ingresos: +{ingresos_totales:.1f} | Mantenimiento: -{mantenimiento_total:.1f} | Tesoro Actual: {imperio.oro:.1f}")
+            
+            # Penalización por bancarrota
+            if imperio.oro < 0:
+                print(f"[BANCARROTA] {nombre} no puede mantener su ejército. Tropas desertando...")
+                for prov in provincias_propias:
+                    prov.tropas = int(prov.tropas * 0.7) # Pierde el 30% de sus tropas
 
 # ==========================================
-# ÁREA DE PRUEBAS Y SIMULACIÓN
+# ÁREA DE PRUEBAS Y SIMULACIÓN (MAIN)
 # ==========================================
 if __name__ == "__main__":
     motor = MotorAgeOfConquest()
     
-    # 1. Configuración de Estados Iniciales
-    motor.registrar_imperio(Imperio("Imperio Romano", oro_inicial=500, tasa_impuestos=1.0))
-    motor.registrar_imperio(Imperio("Tribus Galas", oro_inicial=200, tasa_impuestos=0.8))
+    # 1. Inicializar variables de entrada (Estado inicial)
+    motor.registrar_imperio(Imperio("Roma", oro_inicial=100, tasa_impuestos=0.10))
+    motor.registrar_imperio(Imperio("Cartago", oro_inicial=80, tasa_impuestos=0.15))
     
-    motor.registrar_provincia(Provincia("Roma Central", "Imperio Romano", poblacion=10000, tropas=200, felicidad=80.0))
-    motor.registrar_provincia(Provincia("Galia del Sur", "Tribus Galas", poblacion=5000, tropas=150, felicidad=75.0))
+    motor.registrar_provincia(Provincia("Italia", "Roma", poblacion=1000, tropas=50))
+    motor.registrar_provincia(Provincia("Galia", "Roma", poblacion=500, tropas=20))
+    motor.registrar_provincia(Provincia("Norte de África", "Cartago", poblacion=1200, tropas=60))
     
-    # 2. Simular un combate con el Rey atacando (para forzar la evaluación estocástica)
-    # Probaremos enviar menos tropas para que el atacante pierda y veamos el comportamiento límite.
-    motor.resolver_conflicto("Roma Central", "Galia del Sur", tropas_atacantes=100, rey_presente=True, mu_terreno=1.1)
+    # 2. Acciones del jugador en el Turno 1
+    motor.reclutar_tropas("Roma", "Italia", cantidad=10)
+    motor.resolver_conflicto("Italia", "Norte de África", tropas_atacantes=40)
+    
+    # 3. Calcular estado del siguiente turno (Se ejecuta la lógica matemática)
+    motor.procesar_turno()
