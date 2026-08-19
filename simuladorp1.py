@@ -1,26 +1,49 @@
+import random
+import math
+import sys
+
+# ==========================================
+# FUNCIONES AUXILIARES MATEMÁTICAS
+# ==========================================
+def Sat(x):
+    """Función de saturación para mantener variables en el espacio topológico [0, 100]."""
+    return max(0.0, min(100.0, x))
+
+# ==========================================
+# CLASES DE ESTADO (STOCKS)
+# ==========================================
 class Provincia:
-    def __init__(self, nombre, propietario, poblacion, tropas):
+    def __init__(self, nombre, propietario, poblacion, tropas, felicidad=100.0):
         self.nombre = nombre
         self.propietario = propietario
         self.poblacion = poblacion
         self.tropas = tropas
-        
-    def crecimiento_poblacional(self, tasa=0.05):
-        """Aumenta la población en cada turno."""
-        self.poblacion = int(self.poblacion * (1 + tasa))
+        self.felicidad = felicidad # Hit: Nivel de Felicidad [0, 100]
 
 class Imperio:
     def __init__(self, nombre, oro_inicial, tasa_impuestos):
         self.nombre = nombre
         self.oro = oro_inicial
-        self.tasa_impuestos = tasa_impuestos  # Porcentaje (ej. 0.15 = 15%)
-        self.costo_mantenimiento_tropa = 1.0  # Oro por unidad en cada turno
-        
+        self.tasa_impuestos = tasa_impuestos
+        self.es_protectorado = False
+
+# ==========================================
+# MOTOR DE SIMULACIÓN
+# ==========================================
 class MotorAgeOfConquest:
     def __init__(self):
-        self.turnos_transcurridos = 0
+        self.turno_actual = 1
         self.imperios = {}
         self.mapa = {}
+        
+        # Parámetros Fijos (Constantes del Juego)
+        self.alfa = 0.05        # Coeficiente de Capacidad Tributaria Per Cápita
+        self.M_div = 20.0       # Divisor Logístico Operacional
+        self.delta = 8.0        # Coeficiente de Shock Bélico
+        self.gamma = 10.0       # Coeficiente de Amortiguación Social (Fiestas)
+        self.delta_Hrey = 20.0  # Penalización por Anarquía Institucional
+        self.p_muerte = 0.25    # Probabilidad de Muerte del Líder
+        self.H_huelga = 50.0    # Umbral Crítico de Ruptura Fiscal
 
     def registrar_imperio(self, imperio):
         self.imperios[imperio.nombre] = imperio
@@ -28,100 +51,264 @@ class MotorAgeOfConquest:
     def registrar_provincia(self, provincia):
         self.mapa[provincia.nombre] = provincia
 
-    def reclutar_tropas(self, nombre_imperio, nombre_provincia, cantidad):
-        """Lógica de reclutamiento: cuesta oro y reduce la población."""
-        imperio = self.imperios[nombre_imperio]
-        provincia = self.mapa[nombre_provincia]
-        costo_reclutamiento = 2.0  # Costo por tropa
-        
-        costo_total = cantidad * costo_reclutamiento
-        
-        if imperio.oro >= costo_total and provincia.poblacion > cantidad:
-            imperio.oro -= costo_total
-            provincia.poblacion -= cantidad
-            provincia.tropas += cantidad
-            print(f"[RECLUTAMIENTO] {cantidad} tropas reclutadas en {provincia.nombre}.")
-        else:
-            print("[ERROR] Oro o población insuficiente para reclutar.")
+    # --- NUEVAS FUNCIONES DE BÚSQUEDA ROBUSTA ---
+    def obtener_provincia(self, nombre_input):
+        """Busca una provincia ignorando mayúsculas y espacios accidentales."""
+        for prov in self.mapa.values():
+            if prov.nombre.strip().lower() == nombre_input.strip().lower():
+                return prov
+        return None
 
-    def resolver_conflicto(self, prov_origen, prov_destino, tropas_atacantes):
-        """Mecánica de resolución de conflictos (Ecuación determinista básica)."""
-        origen = self.mapa[prov_origen]
-        destino = self.mapa[prov_destino]
+    def obtener_imperio(self, nombre_input):
+        """Busca un imperio ignorando mayúsculas y espacios accidentales."""
+        for imp in self.imperios.values():
+            if imp.nombre.strip().lower() == nombre_input.strip().lower():
+                return imp
+        return None
+    # ---------------------------------------------
+
+    def reclutar_tropas(self, nombre_provincia, cantidad):
+        """Flujo de Alta Militar"""
+        prov = self.obtener_provincia(nombre_provincia) # Usando la búsqueda robusta
         
-        if origen.tropas < tropas_atacantes:
-            print("[ERROR] No hay suficientes tropas en la provincia de origen.")
+        # Validación de seguridad
+        if not prov:
+            print(f"[ERROR] La provincia '{nombre_provincia}' no fue encontrada. Revisa el nombre.")
             return
 
-        print(f"[COMBATE] {origen.propietario} ataca {destino.nombre} ({destino.propietario}) con {tropas_atacantes} tropas.")
-        origen.tropas -= tropas_atacantes
+        imperio = self.obtener_imperio[prov.propietario]
+        if not imperio:
+            print(f"[ERROR] El imperio propietario '{prov.propietario}' ")
+            return
+        costo = cantidad * 2.0  # Costo fijo hipotético por tropa
         
-        # Ecuación de combate: El defensor tiene ventaja táctica (multiplicador 1.2)
-        fuerza_defensiva = destino.tropas * 1.2
-        fuerza_ofensiva = tropas_atacantes * 1.0
-        
-        if fuerza_ofensiva > fuerza_defensiva:
-            # Gana el atacante
-            bajas_atacante = int(destino.tropas * 0.8)
-            tropas_sobrevivientes = tropas_atacantes - bajas_atacante
-            print(f"[RESULTADO] ¡{origen.propietario} conquista {destino.nombre}! Sobreviven {tropas_sobrevivientes} tropas.")
-            
-            destino.propietario = origen.propietario
-            destino.tropas = tropas_sobrevivientes
+        if imperio.oro >= costo and prov.poblacion > cantidad:
+            imperio.oro -= costo
+            prov.poblacion -= cantidad
+            prov.tropas += cantidad
+            print(f"[ÉXITO] Se reclutaron {cantidad} soldados en {prov.nombre}. Costo: {costo} oro.")
         else:
-            # Gana el defensor
-            bajas_defensor = int(tropas_atacantes * 0.5)
-            destino.tropas -= bajas_defensor
-            print(f"[RESULTADO] {destino.propietario} repele el ataque. Le quedan {destino.tropas} tropas.")
+            print("[ERROR] Oro o población insuficiente.")
 
-    def procesar_turno(self):
-        """Calcula el estado del siguiente turno (Economía y Población)."""
-        self.turnos_transcurridos += 1
-        print(f"\n{'='*15} INICIANDO TURNO {self.turnos_transcurridos} {'='*15}")
+    def organizar_fiesta(self, nombre_provincia):
+        """Tasa de Inversión Social voluntaria"""
+        prov = self.obtener_provincia(nombre_provincia) # Usando la búsqueda robusta
         
-        # 1. Economía y Mantenimiento
-        for nombre, imperio in self.imperios.items():
-            ingresos_totales = 0
-            mantenimiento_total = 0
+        # Validación de seguridad para evitar el crasheo (NoneType)
+        if not prov:
+            print(f"[ERROR] La provincia '{nombre_provincia}' no fue encontrada. Revisa el nombre.")
+            return
+
+        imperio = self.imperios[prov.propietario]
+        costo_fiesta = 50.0
+        
+        if imperio.oro >= costo_fiesta:
+            imperio.oro -= costo_fiesta
+            prov.felicidad = Sat(prov.felicidad + self.gamma)
+            print(f"[INVERSIÓN SOCIAL] Fiesta celebrada en {prov.nombre}. Felicidad actual: {prov.felicidad}%.")
+        else:
+            print("[ERROR] Oro insuficiente para organizar fiestas.")
+
+    def resolver_conflicto(self, prov_origen, prov_destino, tropas_atacantes, rey_presente):
+        """Resolución de combate mediante Lanchester Estocástico"""
+        origen = self.obtener_provincia(prov_origen)
+        destino = self.obtener_provincia(prov_destino)
+        
+        # Validación de seguridad para ambas provincias
+        if not origen or not destino:
+            print("[ERROR] Una o ambas provincias son inválidas. Revisa los nombres escritos.")
+            return
             
-            provincias_propias = [p for p in self.mapa.values() if p.propietario == nombre]
+        imperio_atacante = self.imperios[origen.propietario]
+        
+        if origen.tropas < tropas_atacantes:
+            print("[ERROR LOGÍSTICO] Tropas insuficientes en la provincia de origen.")
+            return
+
+        print(f"\n>>> INICIANDO CAMPAÑA MILITAR <<<")
+        print(f"Atacante: {origen.propietario} desde {origen.nombre}")
+        print(f"Defensor: {destino.propietario} en {destino.nombre}")
+        
+        origen.tropas -= tropas_atacantes
+        A_k = float(tropas_atacantes)
+        D_k = float(destino.tropas)
+        
+        mu_rey = 1.25 if rey_presente else 1.00
+        eficacia_A = 0.10
+        eficacia_D = 0.10
+        k = 0
+        
+        while A_k > 0 and D_k > 0:
+            k += 1
+            X_A = random.uniform(0.7, 1.3)
+            X_D = random.uniform(0.7, 1.3)
+            
+            delta_A_k = D_k * eficacia_D * X_D
+            delta_D_k = A_k * eficacia_A * mu_rey * 1.0 * X_A # mu_terreno = 1.0
+            
+            A_k = max(0.0, A_k - delta_A_k)
+            D_k = max(0.0, D_k - delta_D_k)
+            
+        A_k = int(A_k)
+        D_k = int(D_k)
+        
+        if A_k > 0:
+            print(f"[VICTORIA] ¡{origen.propietario} conquista {destino.nombre} en {k} asaltos! Sobreviven {A_k} tropas.")
+            destino.propietario = origen.propietario
+            destino.tropas = A_k
+        else:
+            print(f"[DERROTA] {destino.propietario} repele el ataque tras {k} asaltos. Sobreviven {D_k} tropas.")
+            destino.tropas = D_k
+            origen.felicidad = Sat(origen.felicidad - self.delta)
+            print(f"[-] Shock Bélico: La felicidad en {origen.nombre} cae a {origen.felicidad:.1f}%.")
+            
+            if rey_presente:
+                Z = 1 if random.random() <= self.p_muerte else 0 
+                if Z == 1:
+                    print(f"[CRÍTICO] ¡El Rey de {origen.propietario} ha caído en combate!")
+                    imperio_atacante.es_protectorado = True 
+                    origen.felicidad = Sat(origen.felicidad - self.delta_Hrey) 
+                    print(f"[ANARQUÍA] {origen.propietario} es ahora un Protectorado. Moral desplomada.")
+
+    def procesar_fin_de_turno(self):
+        """Ciclo de Resolución de Fin de Turno (Demografía, Economía y Limites)"""
+        print(f"\n{'='*40}")
+        print(f" PROCESANDO FIN DE TURNO {self.turno_actual} ")
+        print(f"{'='*40}")
+        
+        for nombre_imp, imperio in self.imperios.items():
+            provincias_propias = [p for p in self.mapa.values() if p.propietario == nombre_imp]
+            ingresos_brutos = 0.0
+            costo_mantenimiento = 0.0
             
             for prov in provincias_propias:
-                # Ecuación de ingresos: Población * Tasa de Impuestos
-                ingresos_totales += prov.poblacion * imperio.tasa_impuestos
-                # Ecuación de gastos: Tropas * Costo de Mantenimiento
-                mantenimiento_total += prov.tropas * imperio.costo_mantenimiento_tropa
-                # Actualizar demografía
-                prov.crecimiento_poblacional()
+                # 1. EVOLUCIÓN AMBIENTAL Y MORAL
+                if imperio.tasa_impuestos > 1.0:
+                    prov.felicidad -= (imperio.tasa_impuestos * 15.0)
+                elif imperio.tasa_impuestos == 0.0:
+                    prov.felicidad += 10.0
+                prov.felicidad = Sat(prov.felicidad)
+
+                # 2. DINÁMICA DEMOGRÁFICA
+                if prov.felicidad >= self.H_huelga:
+                    prov.poblacion = int(prov.poblacion * 1.01) # Crecimiento 1%
+                else:
+                    prov.poblacion = int(prov.poblacion * 0.99) # Decrecimiento 1%
                 
-            balance_neto = ingresos_totales - mantenimiento_total
-            imperio.oro += balance_neto
+                # 3. FLUIDEZ MACROECONÓMICA
+                if prov.felicidad >= self.H_huelga:
+                    ingresos_brutos += (prov.poblacion * self.alfa) * imperio.tasa_impuestos
+                else:
+                    print(f"[ALERTA] Huelga fiscal en {prov.nombre} ({nombre_imp}). Recaudación nula.")
+                
+                # 4. LOGÍSTICA MILITAR
+                costo_mantenimiento += max(1.0, math.floor(prov.tropas / self.M_div))
+
+            # 5. REGULACIÓN COLONIAL (Vasallaje)
+            pago_protectorado = 0.0
+            if imperio.es_protectorado:
+                pago_protectorado = ingresos_brutos * 0.10
+                ingresos_brutos -= pago_protectorado
+                print(f"[-] {nombre_imp} paga {pago_protectorado:.1f} oro como exacción colonial.")
+
+            # 6. BALANCE FINAL DE LA TESORERÍA
+            imperio.oro = imperio.oro + ingresos_brutos - costo_mantenimiento
             
-            print(f"[{nombre}] Ingresos: +{ingresos_totales:.1f} | Mantenimiento: -{mantenimiento_total:.1f} | Tesoro Actual: {imperio.oro:.1f}")
-            
-            # Penalización por bancarrota
+            print(f"[{nombre_imp}] Ingresos: +{ingresos_brutos:.1f} | Mantenimiento: -{costo_mantenimiento:.1f} | Tesoro: {imperio.oro:.1f}")
             if imperio.oro < 0:
-                print(f"[BANCARROTA] {nombre} no puede mantener su ejército. Tropas desertando...")
-                for prov in provincias_propias:
-                    prov.tropas = int(prov.tropas * 0.7) # Pierde el 30% de sus tropas
+                print(f"[DÉFICIT FINANCIERO] {nombre_imp} se encuentra en quiebra y deudas.")
+                
+        self.turno_actual += 1
+
+    def mostrar_estado(self):
+        print(f"\n--- ESTADO GLOBAL (TURNO {self.turno_actual}) ---")
+        for nombre, imp in self.imperios.items():
+            estado_pol = "Protectorado" if imp.es_protectorado else "Libre"
+            print(f"Imperio: {nombre} | Tesoro: {imp.oro:.1f} oro | Impuestos: {imp.tasa_impuestos}x | Estatus: {estado_pol}")
+            
+        print("\n--- TERRITORIOS ---")
+        for nombre, prov in self.mapa.items():
+            print(f"[{prov.nombre}] Prop: {prov.propietario} | Pob: {prov.poblacion} | Tropas: {prov.tropas} | Moral: {prov.felicidad:.1f}%")
+        print("-----------------------------------")
+
 
 # ==========================================
-# ÁREA DE PRUEBAS Y SIMULACIÓN (MAIN)
+# INTERFAZ DE LÍNEA DE COMANDOS (CLI)
 # ==========================================
-if __name__ == "__main__":
+def main():
     motor = MotorAgeOfConquest()
     
-    # 1. Inicializar variables de entrada (Estado inicial)
-    motor.registrar_imperio(Imperio("Roma", oro_inicial=100, tasa_impuestos=0.10))
-    motor.registrar_imperio(Imperio("Cartago", oro_inicial=80, tasa_impuestos=0.15))
+    # Configuración Inicial
+    motor.registrar_imperio(Imperio("Imperio Romano", oro_inicial=500, tasa_impuestos=1.0))
+    motor.registrar_imperio(Imperio("Tribus Galas", oro_inicial=200, tasa_impuestos=0.8))
     
-    motor.registrar_provincia(Provincia("Italia", "Roma", poblacion=1000, tropas=50))
-    motor.registrar_provincia(Provincia("Galia", "Roma", poblacion=500, tropas=20))
-    motor.registrar_provincia(Provincia("Norte de África", "Cartago", poblacion=1200, tropas=60))
+    motor.registrar_provincia(Provincia("Roma", "Imperio Romano", poblacion=10000, tropas=200, felicidad=80.0))
+    motor.registrar_provincia(Provincia("Galia", "Tribus Galas", poblacion=5000, tropas=150, felicidad=75.0))
     
-    # 2. Acciones del jugador en el Turno 1
-    motor.reclutar_tropas("Roma", "Italia", cantidad=10)
-    motor.resolver_conflicto("Italia", "Norte de África", tropas_atacantes=40)
+    print("========================================")
+    print(" MOTOR DE SIMULACIÓN AGE OF CONQUEST IV")
+    print("========================================")
     
-    # 3. Calcular estado del siguiente turno (Se ejecuta la lógica matemática)
-    motor.procesar_turno()
+    # Bucle Principal Interactivo
+    while True:
+        motor.mostrar_estado()
+        
+        print("\n¿Qué acción deseas tomar este turno?")
+        print("1. Reclutar Tropas")
+        print("2. Atacar Provincia")
+        print("3. Organizar Fiesta Popular (Mitigar Crisis)")
+        print("4. Cambiar Tasa de Impuestos")
+        print("5. Terminar Turno (Ejecutar LEF y Avanzar)")
+        print("6. Salir del Simulador")
+        
+        opcion = input("\nIngresa el número de tu acción: ")
+        
+        if opcion == "1":
+            prov = input("Nombre de tu provincia (ej. Roma): ")
+            try:
+                cant = int(input("Cantidad de soldados a reclutar: "))
+                motor.reclutar_tropas(prov, cant)
+            except ValueError:
+                print("Cantidad inválida. Ingresa un número entero.")
+                
+        elif opcion == "2":
+            origen = input("Provincia de Origen (tuya): ")
+            destino = input("Provincia de Destino (enemiga): ")
+            try:
+                cant = int(input("Cantidad de soldados a enviar: "))
+                rey = input("¿El Rey lidera la batalla? (s/n): ").lower() == 's'
+                motor.resolver_conflicto(origen, destino, cant, rey)
+            except ValueError:
+                print("Cantidad inválida. Ingresa un número entero.")
+                
+        elif opcion == "3":
+            prov = input("Nombre de la provincia a intervenir: ")
+            motor.organizar_fiesta(prov)
+            
+        elif opcion == "4":
+            imp_nombre = input("Nombre de tu imperio (ej. Imperio Romano): ")
+            try:
+                tasa = float(input("Nueva tasa (ej. 0.0 para cero, 1.5 para alta): "))
+                # Aquí también aplicamos la búsqueda robusta para el imperio
+                imp_obj = motor.obtener_imperio(imp_nombre)
+                
+                if imp_obj:
+                    imp_obj.tasa_impuestos = tasa
+                    print(f"Impuestos de '{imp_obj.nombre}' actualizados a {tasa}.")
+                else:
+                    print(f"[ERROR] Imperio '{imp_nombre}' no encontrado. Revisa el nombre.")
+            except ValueError:
+                print("Tasa inválida. Usa formato decimal.")
+                
+        elif opcion == "5":
+            motor.procesar_fin_de_turno()
+            
+        elif opcion == "6":
+            print("Saliendo de la simulación. ¡Hasta pronto!")
+            sys.exit()
+            
+        else:
+            print("Opción no válida. Intenta de nuevo.")
+
+if __name__ == "__main__":
+    main()
