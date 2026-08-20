@@ -141,13 +141,22 @@ pip install PyQt5
 ### 3. Ejecutar el Simulador
 
 **Modo gráfico (recomendado)**
+
+```bash
 python main.py -g
+```
 
 **Modo consola**
+
+```bash
 python main.py -c
+```
 
 **Selección interactiva**
+
+```bash
 python main.py
+```
 
 **Comandos en Modo Consola**
 
