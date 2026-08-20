@@ -120,8 +120,11 @@ class MotorSimulacion:
         self.imperio_jugador = "Imperio Romano"
         self.modo_consola = modo_consola
         
-        # Lista de Eventos Futuros (LEF)
+        # Lista de Eventos Futuros (LEF) - Mantenida por compatibilidad
         self.lef = []
+        
+        # Bandera para evitar procesamiento recursivo de IA
+        self.procesando_ia = False
         
         # Parametros del juego (calibrados segun documentos)
         self.parametros = {
@@ -244,10 +247,6 @@ class MotorSimulacion:
         p.tropas += cantidad
         imp.gastar_punto()
         
-        # Registrar en LEF
-        self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.RECLUTAMIENTO, 
-                                   {'provincia': p.nombre, 'cantidad': cantidad}))
-        
         return {'success': True, 'provincia': p.nombre, 'cantidad': cantidad}
 
     def organizar_fiesta(self, provincia):
@@ -269,10 +268,6 @@ class MotorSimulacion:
         nueva_felicidad = Sat(p.felicidad + self.parametros['gamma'])
         p.felicidad = nueva_felicidad
         imp.gastar_punto()
-        
-        # Registrar en LEF
-        self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.FIESTA,
-                                   {'provincia': p.nombre, 'felicidad': nueva_felicidad}))
         
         return {'success': True, 'provincia': p.nombre, 'nueva_felicidad': p.felicidad}
 
@@ -335,10 +330,6 @@ class MotorSimulacion:
             imp.provincias_conquistadas += 1
             imp.provincias_anexadas += 1
             
-            # Registrar en LEF
-            self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.BATALLA,
-                                       {'victoria': True, 'provincia': d.nombre}))
-            
             # Transferir provincia
             d.propietario = o.propietario
             d.tropas = A
@@ -353,19 +344,11 @@ class MotorSimulacion:
             d.tropas = D
             o.felicidad = Sat(o.felicidad - self.parametros['delta'])
             
-            # Registrar en LEF
-            self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.BATALLA,
-                                       {'victoria': False, 'provincia': d.nombre}))
-            
             # Verificar muerte del rey
             if rey_presente and imp.rey_vivo and random.random() <= self.parametros['p_muerte']:
                 imp.rey_vivo = False
                 imp.es_protectorado = True
                 o.felicidad = Sat(o.felicidad - self.parametros['delta_hrey'])
-                
-                # Registrar en LEF
-                self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.MUERTE_REY,
-                                           {'imperio': imp.nombre}))
                 
                 return {'success': True, 'victoria': False, 'rey_muerto': True, 'provincia': d.nombre}
                 
@@ -429,12 +412,19 @@ class MotorSimulacion:
 
     def procesar_ia_turno(self):
         """Procesa las decisiones de IA para todos los imperios enemigos"""
+        if self.procesando_ia:
+            return []  # Evitar recursion
+            
+        self.procesando_ia = True
         resultados = []
-        for nombre, imp in self.imperios.items():
-            if imp.es_ia and imp.nombre != self.imperio_jugador:
-                resultado = self.tomar_decision_ia(imp)
-                if resultado and resultado.get('success'):
-                    resultados.append(f"{nombre}: Accion IA ejecutada")
+        try:
+            for nombre, imp in self.imperios.items():
+                if imp.es_ia and imp.nombre != self.imperio_jugador:
+                    resultado = self.tomar_decision_ia(imp)
+                    if resultado and resultado.get('success'):
+                        resultados.append(f"{nombre}: Accion IA ejecutada")
+        finally:
+            self.procesando_ia = False
         return resultados
 
     # ==========================================
@@ -449,7 +439,7 @@ class MotorSimulacion:
         for nombre, imp in self.imperios.items():
             provincias = self.provincias_de(nombre)
             if not provincias:
-                resumen[nombre] = {'ingresos': 0, 'mantenimiento': 0, 'tributo': 0, 'oro': imp.oro}
+                resumen[nombre] = {'ingresos': 0, 'mantenimiento': 0, 'tributo': 0, 'oro': imp.oro, 'felicidad_promedio': 0}
                 continue
                 
             ingresos = 0
@@ -538,6 +528,10 @@ class MotorSimulacion:
         if random.random() < self.parametros['p_evento']:
             self._evento_aleatorio()
         
+        # Resetear puntos de movimiento para todos los imperios
+        for imp in self.imperios.values():
+            imp.reset_puntos()
+        
         return resumen, resultados_ia
 
     def _evento_aleatorio(self):
@@ -574,42 +568,17 @@ class MotorSimulacion:
         return mensaje
 
     def ejecutar_turnos(self, num=5):
-        """Ejecuta multiples turnos usando la LEF"""
+        """Ejecuta multiples turnos de forma segura"""
         resultados = []
         for i in range(num):
-            # Procesar eventos en la LEF
-            self._procesar_lef()
-            
-            # Forzar fin de turno si no hay eventos
-            if not self.lef or self.lef[0].turno_ejecucion > self.turno_actual + 1:
-                self.procesar_fin_de_turno()
-                # Re-agendar fin de turno
-                self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.FIN_DE_TURNO))
-        
+            # Ejecutar un turno individual
+            r, ia = self.procesar_fin_de_turno()
+            resultados.append({
+                'turno': self.turno_actual,
+                'resumen': r,
+                'ia': ia
+            })
         return resultados
-
-    def _procesar_lef(self):
-        """Procesa la Lista de Eventos Futuros"""
-        if not self.lef:
-            return
-            
-        # Ordenar por tiempo
-        self.lef.sort(key=lambda e: e.turno_ejecucion)
-        
-        # Procesar eventos hasta el turno actual
-        while self.lef and self.lef[0].turno_ejecucion <= self.turno_actual + 1:
-            evento = self.lef.pop(0)
-            
-            if evento.tipo == TipoEvento.FIN_DE_TURNO:
-                self.procesar_fin_de_turno()
-                # Re-agendar
-                self.lef.append(EventoSIM(self.turno_actual + 1, TipoEvento.FIN_DE_TURNO))
-            elif evento.tipo == TipoEvento.EVENTO_ALEATORIO:
-                self._evento_aleatorio()
-                # Re-agendar
-                self.lef.append(EventoSIM(self.turno_actual + random.randint(1, 3), 
-                                         TipoEvento.EVENTO_ALEATORIO))
-            # Otros eventos se procesan segun sus datos
 
     # ==========================================
     # METRICAS DE RENDIMIENTO
@@ -714,7 +683,7 @@ class MotorSimulacion:
         """Ejecuta 5 turnos en consola"""
         print("Ejecutando 5 turnos...")
         for i in range(5):
-            self.procesar_fin_de_turno()
+            r, ia = self.procesar_fin_de_turno()
             print(f"  Turno {self.turno_actual} completado")
         print("5 turnos completados")
 
