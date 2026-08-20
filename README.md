@@ -143,19 +143,19 @@ pip install PyQt5
 **Modo gráfico (recomendado)**
 
 ```bash
-python main.py -g
+python simuladorp1.py -g
 ```
 
 **Modo consola**
 
 ```bash
-python main.py -c
+python simuladorp1.py -c
 ```
 
 **Selección interactiva**
 
 ```bash
-python main.py
+python simuladorp1.py
 ```
 
 **Comandos en Modo Consola**
